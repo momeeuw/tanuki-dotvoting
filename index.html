@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tanuki — Dot Voting</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: #F5F3EF; color: #0A0A0A; padding: 20px; }
+  header { max-width: 900px; margin: 0 auto 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  header h1 { font-size: 20px; font-weight: 700; }
+  .votes-left { background: #2040CC; color: #fff; padding: 8px 20px; border-radius: 20px; font-size: 14px; font-weight: 700; }
+  .votes-left.empty { background: #ccc; }
+  .reset-btn { background: none; border: 1px solid #ccc; padding: 7px 16px; border-radius: 20px; font-size: 12px; cursor: pointer; color: #555; }
+  .reset-btn:hover { background: #eee; }
+  .container { max-width: 900px; margin: 0 auto; }
+  .fase { margin-bottom: 28px; }
+  .fase-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #2040CC; }
+  .fase-naam { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #2040CC; }
+  .fase-count { font-size: 11px; color: #999; }
+  .idee { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 8px; padding: 10px 14px; margin-bottom: 6px; transition: box-shadow 0.15s; }
+  .idee:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .idee.voted { border-left: 3px solid #2040CC; }
+  .idee-tekst { flex: 1; font-size: 13px; line-height: 1.5; }
+  .vote-btn { flex-shrink: 0; background: none; border: 1.5px solid #E0DDD7; border-radius: 20px; padding: 5px 12px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 6px; transition: all 0.15s; color: #555; }
+  .vote-btn:hover:not(:disabled) { border-color: #2040CC; color: #2040CC; }
+  .vote-btn.voted { background: #2040CC; border-color: #2040CC; color: #fff; }
+  .vote-btn:disabled:not(.voted) { opacity: 0.4; cursor: not-allowed; }
+  .vote-count { font-weight: 700; min-width: 16px; text-align: center; }
+  .bar { height: 4px; background: #EEF1FC; border-radius: 2px; margin-top: 4px; flex-shrink: 0; width: 60px; }
+  .bar-fill { height: 100%; background: #2040CC; border-radius: 2px; transition: width 0.3s; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #0A0A0A; color: #fff; padding: 10px 20px; border-radius: 20px; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 999; }
+  .toast.show { opacity: 1; }
+  .results-link { text-align: center; margin-top: 32px; padding: 20px; background: #fff; border-radius: 10px; }
+  .results-link p { font-size: 13px; color: #555; margin-bottom: 8px; }
+  .results-link strong { color: #2040CC; font-size: 15px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Tanuki — Dot Voting</h1>
+    <p style="font-size:12px; color:#888; margin-top:2px;">Kies de 5 ideeën die jij het meest waardevol vindt</p>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <button class="reset-btn" onclick="resetVotes()">Mijn stemmen resetten</button>
+    <div class="votes-left" id="votes-left">5 stemmen over</div>
+  </div>
+</header>
+
+<div class="container" id="app"></div>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, runTransaction, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCSn5lH6HOwKzmoTWuTCxkbOk3_iAlJ3IQ",
+  authDomain: "tanuki-dotvoting.firebaseapp.com",
+  projectId: "tanuki-dotvoting",
+  storageBucket: "tanuki-dotvoting.firebasestorage.app",
+  messagingSenderId: "624776158195",
+  appId: "1:624776158195:web:8bb574281d921e2d585086",
+  databaseURL: "https://tanuki-dotvoting-default-rtdb.europe-west1.firebasedatabase.app"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+const MAX_VOTES = 5;
+const STORAGE_KEY = 'tanuki_votes';
+
+const FASES = [
+  { naam: 'Governance', kleur: '#b45309', ideeën: [
+    'EU AI Act impact in kaart brengen',
+    'Guardrails / claude.md op basis van iO en teamstandaarden',
+    'Skills en rules opzetten',
+    'Hoe borgen we gelijke werkwijze bij eigen toolkeuze (Cursor, VS Code, Claude Code)',
+    'Standaard werkwijze borgen in iO-specifieke tools',
+    'AI Fundamentals kosten inzichtelijk per klant',
+    'Tokens registreren per story zodat AI-kosten inzichtelijk zijn per story/epic',
+  ]},
+  { naam: 'Training / Kennisbasis', kleur: '#b45309', ideeën: [
+    'Agent werkt zichzelf bij obv kennis (Confluence), status (Jira), code (Git/ADO) en klantperspectief',
+    'NOVA als default voor alle projecten',
+    'Confluence documentatie opschonen en hetzelfde format voor alle klanten',
+    'Eigen omgeving in Confluence voor teamprocessen, verbeteringen, retro\'s (FORGE?)',
+    'Agents, Hermes, Models — wie houdt wat bij, hoe houden we elkaar op de hoogte?',
+    'Bak voor heel iO waarop gequeried kan worden of iemand al een idee gestart heeft',
+    'Onboarding van nieuwe developer',
+    'Analyse huidig werkproces',
+  ]},
+  { naam: 'Requirements', kleur: '#2040CC', ideeën: [
+    'Acceptance criteria opstellen vanuit story + refinement',
+    'Standaard story format',
+    'Verdere standaardisering stories, controle agent-geschiktheid voordat story ready is',
+    'Ticket dependencies in kaart brengen (blokkers, open vragen voor komende sprint)',
+    'Wijzigingen in wensen/requirements automatisch flaggen in documentatie en stories',
+    'Requirements structureren',
+    'Sprintvoorstellen / offertes + inschattingen obv eigen tone of voice',
+  ]},
+  { naam: 'Design', kleur: '#b45309', ideeën: [
+    'Figma MCP — verder uitbouwen',
+    'Figma code connect — voordelen, export proces eenvoudiger?',
+    'OutSystems UI genereren aan de hand van een design',
+    'Interactie snel "echt" maken (prototypen)',
+    'POC opzetten met testdata uit NGF database + design via MentorAI',
+  ]},
+  { naam: 'Architectuur', kleur: '#b45309', ideeën: [
+    'Standaardisering ADRs + challengen bij uitwerking + impact op bestaande code/stories',
+    'POCs om stack-keuzes te vergelijken, pros/cons afwegen',
+    'PR review agent gericht op afwijkingen van conventies',
+    'PR review tegen architectuurkeuzes',
+    'Hoe omgaan met software die voor engineer én AI relatief nieuw is (bijv. Sitecore AI)',
+  ]},
+  { naam: 'Coding', kleur: '#2040CC', ideeën: [
+    'OutSystems logica genereren aan de hand van een prompt (O11)',
+    'OutSystems applicatielogica beschikbaar maken aan Bonzai',
+    'Hallucinaties/deprecations verminderen met Context7',
+    'Guardrails / agent instructions op iO/teamstandaarden',
+    'Create defensive code',
+    'Coding guidelines borgen / code review',
+    'Bug fixes in fix/feature-branch zo veel mogelijk release-ready maken',
+  ]},
+  { naam: 'Testing / QA', kleur: '#2040CC', ideeën: [
+    'Test scenario\'s genereren op basis van requirements (vooraf)',
+    'Extra test scenario\'s opstellen op basis van code-aanpassingen (achteraf)',
+    'Test scenario\'s automatisch uitvoeren in de build pipeline',
+    'AI e2e testing',
+    'AI e2e testing in CI/CD',
+    'AI infused testing automation met Autosana — testen op basis van description ipv id\'s',
+    'Recursive unit testing loop',
+    'Blinde vlekken op gebied van unit tests in kaart brengen',
+    'Testen van edge cases die problemen gaven in het verleden',
+    'Security testen (pentest / AI pentesting)',
+  ]},
+  { naam: 'Release', kleur: '#2040CC', ideeën: [
+    'Release notes genereren vanuit Jira',
+    'AI changelogs op basis van commits en toegevoegde waarde',
+    'Compliancy controleren als last line of defence',
+    'AI PR reviews met mogelijke verbeteringen of edge cases',
+    'Crashlytics integration en fixes',
+  ]},
+  { naam: 'Operations', kleur: '#1a7a3c', ideeën: [
+    'Applicatiebeheer rapportages opstellen',
+    'Applicatie monitoring',
+    'Pattern matching en herkennen van afwijkingen, rapporteren',
+    'Samenvatten van monitoring en performance data tot concrete acties',
+    'Matchday runbook over de hele chain (API, notificaties, native app)',
+    'Rapportage: CSV uploaden in agent, klantrapportage klaar',
+    'Geautomatiseerde urenlogging obv Slack, planning, mail',
+    'PM rapportages en templates met Jira-koppeling en roadmaps',
+    'Eerste lijns support voor klanten',
+  ]},
+  { naam: 'Overig / Generiek', kleur: '#555', ideeën: [
+    'Skill / workflow voor verwerken van meeting-opnames naar gestandaardiseerd format',
+    'Meer skills in Hermes',
+    'Bridge integratie',
+    'Hoe kan ik Hermes gebruiken?',
+    'Wanneer wordt Bonzai sneller?',
+    'AI consultancy bij Jira planning / DSU — wat is handig om eerst te doen?',
+    'AI gebruiken om enablement soepeler te maken (uit de operatie stappen)',
+    'Klanten een ingang geven via n8n',
+  ]},
+];
+
+// Maak een vlakke lijst van alle ideeën met IDs
+const allIdeeën = [];
+FASES.forEach((fase, fi) => {
+  fase.ideeën.forEach((idee, ii) => {
+    allIdeeën.push({ id: `f${fi}_i${ii}`, tekst: idee, fase: fase.naam });
+  });
+});
+
+// Lokale staat
+let mijnStemmen = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+let stemTotalen = {};
+
+function votesLeft() { return MAX_VOTES - mijnStemmen.length; }
+
+function updateVotesLeft() {
+  const el = document.getElementById('votes-left');
+  const n = votesLeft();
+  el.textContent = n === 0 ? 'Geen stemmen meer' : `${n} stem${n === 1 ? '' : 'men'} over`;
+  el.className = 'votes-left' + (n === 0 ? ' empty' : '');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+function renderApp() {
+  const app = document.getElementById('app');
+  const maxVotes = Math.max(...Object.values(stemTotalen), 1);
+
+  app.innerHTML = FASES.map((fase, fi) => {
+    const ideeënHtml = fase.ideeën.map((idee, ii) => {
+      const id = `f${fi}_i${ii}`;
+      const count = stemTotalen[id] || 0;
+      const gestemd = mijnStemmen.includes(id);
+      const disabled = !gestemd && votesLeft() === 0;
+      const pct = Math.round((count / maxVotes) * 100);
+
+      return `<div class="idee${gestemd ? ' voted' : ''}" id="row_${id}">
+        <div class="idee-tekst">${idee}</div>
+        <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+        <button class="vote-btn${gestemd ? ' voted' : ''}" ${disabled ? 'disabled' : ''} onclick="window.toggleVote('${id}')">
+          <span class="vote-count">${count}</span>
+          <span>${gestemd ? '✓' : '+'}</span>
+        </button>
+      </div>`;
+    }).join('');
+
+    return `<div class="fase">
+      <div class="fase-header" style="border-color:${fase.kleur}">
+        <span class="fase-naam" style="color:${fase.kleur}">${fase.naam}</span>
+        <span class="fase-count">${fase.ideeën.length} ideeën</span>
+      </div>
+      ${ideeënHtml}
+    </div>`;
+  }).join('');
+}
+
+window.toggleVote = function(id) {
+  const gestemd = mijnStemmen.includes(id);
+  if (!gestemd && votesLeft() === 0) { showToast('Geen stemmen meer over'); return; }
+
+  const dbRef = ref(db, `votes/${id}`);
+  const delta = gestemd ? -1 : 1;
+
+  runTransaction(dbRef, (current) => Math.max(0, (current || 0) + delta));
+
+  if (gestemd) {
+    mijnStemmen = mijnStemmen.filter(v => v !== id);
+    showToast('Stem verwijderd');
+  } else {
+    mijnStemmen.push(id);
+    showToast('Stem toegevoegd');
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(mijnStemmen));
+  updateVotesLeft();
+  renderApp();
+};
+
+window.resetVotes = function() {
+  if (!confirm('Wil je al jouw stemmen resetten?')) return;
+  mijnStemmen.forEach(id => {
+    runTransaction(ref(db, `votes/${id}`), (c) => Math.max(0, (c || 0) - 1));
+  });
+  mijnStemmen = [];
+  localStorage.removeItem(STORAGE_KEY);
+  updateVotesLeft();
+  renderApp();
+  showToast('Stemmen gereset');
+};
+
+// Live updates via Firebase
+onValue(ref(db, 'votes'), (snapshot) => {
+  stemTotalen = snapshot.val() || {};
+  renderApp();
+});
+
+updateVotesLeft();
+renderApp();
+</script>
+</body>
+</html>
